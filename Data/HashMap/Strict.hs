@@ -185,7 +185,7 @@ insertWithInternal f k0 v0 m0 = go h0 k0 v0 0 m0
             let !start = A.length v
                 !newV  = updateOrSnocWith f k x v
                 !end   = A.length newV
-            in A.Sized (end - start) (Collision h newV)
+            in A.Sized (A.Size (end - start)) (Collision h newV)
         | otherwise = go h k x s $ BitmapIndexed (mask hy s) (A.singleton t)
 {-# INLINABLE insertWithInternal #-}
 
@@ -241,7 +241,7 @@ unsafeInsertWithInternal f k0 v0 m0 = runST (go h0 k0 v0 0 m0)
             let !start = A.length v
                 !newV = updateOrSnocWith f k x v
                 !end = A.length newV
-            in return . A.Sized (end - start) $! Collision h newV
+            in return . A.Sized (A.Size (end - start)) $! Collision h newV
         | otherwise = go h k x s $ BitmapIndexed (mask hy s) (A.singleton t)
 {-# INLINABLE unsafeInsertWithInternal #-}
 
@@ -344,21 +344,22 @@ unionWithKeyInternal f hm1 (HashMap siz hm2) = go 0 siz hm1 hm2
             let !start = A.length ls2
                 !newV = updateOrSnocWithKey f k1 v1 ls2
                 !end = A.length newV
-            in A.Sized (sz + end - start - 1) (Collision h1 newV)
+            in A.Sized (sz + A.Size (end - start - 1)) (Collision h1 newV)
         | otherwise = goDifferentHash s sz h1 h2 t1 t2
     go s !sz t1@(Collision h1 ls1) t2@(Leaf h2 (L k2 v2))
         | h1 == h2  =
             let !start = A.length ls1
                 !newV = updateOrSnocWithKey (flip . f) k2 v2 ls1
                 !end = A.length newV
-            in A.Sized (sz + end - start - 1) (Collision h1 newV)
+            in A.Sized (sz + A.Size (end - start - 1)) (Collision h1 newV)
         | otherwise = goDifferentHash s sz h1 h2 t1 t2
     go s !sz t1@(Collision h1 ls1) t2@(Collision h2 ls2)
         | h1 == h2  =
             let !start = A.length ls1
                 !newV = updateOrConcatWithKey f ls1 ls2
                 !end = A.length newV
-            in A.Sized (sz + (end - start - A.length ls2)) (Collision h1 newV)
+            in A.Sized (sz + A.Size (end - start - A.length ls2))
+                       (Collision h1 newV)
         | otherwise = goDifferentHash s sz h1 h2 t1 t2
     -- branch vs. branch
     go s !sz (BitmapIndexed b1 ary1) (BitmapIndexed b2 ary2) =

@@ -162,7 +162,7 @@ type role Tree nominal representational
 
 -- | A wrapper over 'Tree'. The 'Int' field represent the hashmap's
 -- size.
-data HashMap k v = HashMap {-# UNPACK #-} !Int !(Tree k v)
+data HashMap k v = HashMap {-# UNPACK #-} !A.Size !(Tree k v)
   deriving Typeable
 
 instance (NFData k, NFData v) => NFData (Tree k v) where
@@ -426,7 +426,7 @@ null _                 = False
 
 -- | /O(1)/ Return the number of key-value mappings in this map.
 size :: HashMap k v -> Int
-size (HashMap sz _) = sz
+size (HashMap sz _) = A.unSize sz
 
 -- | /O(log n)/ Return 'True' if the specified key is present in the
 -- map, 'False' otherwise.
@@ -541,7 +541,7 @@ insertInternal k0 v0 m0 = go h0 k0 v0 0 m0
             let !start = A.length v
                 !newV = updateOrSnocWith const k x v
                 !end = A.length newV
-            in A.Sized (end - start) (Collision h newV)
+            in A.Sized (A.Size (end - start)) (Collision h newV)
         | otherwise = go h k x s $ BitmapIndexed (mask hy s) (A.singleton t)
 {-# INLINABLE insertInternal #-}
 
@@ -588,7 +588,7 @@ unsafeInsertInternal k0 v0 m0 = runST (go h0 k0 v0 0 m0)
             let !start = A.length v
                 !newV = updateOrSnocWith const k x v
                 !end = A.length newV
-            in return $! A.Sized (end - start) (Collision h newV)
+            in return $! A.Sized (A.Size (end - start)) (Collision h newV)
         | otherwise = go h k x s $ BitmapIndexed (mask hy s) (A.singleton t)
 {-# INLINABLE unsafeInsertInternal #-}
 
@@ -671,7 +671,7 @@ insertWithInternal f k0 v0 m0 = go h0 k0 v0 0 m0
             let !start = A.length v
                 !newV  = updateOrSnocWith f k x v
                 !end   = A.length newV
-            in A.Sized (end - start) (Collision h newV)
+            in A.Sized (A.Size (end - start)) (Collision h newV)
         | otherwise = go h k x s $ BitmapIndexed (mask hy s) (A.singleton t)
 {-# INLINABLE insertWithInternal #-}
 
@@ -722,7 +722,7 @@ unsafeInsertWithInternal f k0 v0 m0 = runST (go h0 k0 v0 0 m0)
             let !start = A.length v
                 !newV = updateOrSnocWith f k x v
                 !end = A.length newV
-            in return $! A.Sized (end - start) (Collision h newV)
+            in return $! A.Sized (A.Size (end - start)) (Collision h newV)
         | otherwise = go h k x s $ BitmapIndexed (mask hy s) (A.singleton t)
 {-# INLINABLE unsafeInsertWithInternal #-}
 
@@ -886,7 +886,7 @@ unionWithKeyInternal
 unionWithKeyInternal f hm1 (HashMap siz hm2) = go 0 siz hm1 hm2
   where
     go :: Int                -- ^ Bitmask accumulator
-       -> Int                -- ^ Size accumulator.
+       -> A.Size             -- ^ Size accumulator.
                              -- Counts down from the second hashmap's size.
        -> Tree k v
        -> Tree k v
@@ -905,21 +905,21 @@ unionWithKeyInternal f hm1 (HashMap siz hm2) = go 0 siz hm1 hm2
             let !start = A.length ls2
                 !newV = updateOrSnocWithKey f k1 v1 ls2
                 !end = A.length newV
-            in A.Sized (sz + end - start - 1) (Collision h1 newV)
+            in A.Sized (sz + A.Size (end - start - 1)) (Collision h1 newV)
         | otherwise = goDifferentHash s sz h1 h2 t1 t2
     go s !sz t1@(Collision h1 ls1) t2@(Leaf h2 (L k2 v2))
         | h1 == h2  =
             let !start = A.length ls1
                 !newV = updateOrSnocWithKey (flip . f) k2 v2 ls1
                 !end = A.length newV
-            in A.Sized (sz + end - start - 1) (Collision h1 newV)
+            in A.Sized (sz + A.Size (end - start - 1)) (Collision h1 newV)
         | otherwise = goDifferentHash s sz h1 h2 t1 t2
     go s !sz t1@(Collision h1 ls1) t2@(Collision h2 ls2)
         | h1 == h2  =
             let !start = A.length ls1
                 !newV = updateOrConcatWithKey f ls1 ls2
                 !end = A.length newV
-            in A.Sized (sz + (end - start - A.length ls2)) (Collision h1 newV)
+            in A.Sized (sz + A.Size (end - start - A.length ls2)) (Collision h1 newV)
         | otherwise = goDifferentHash s sz h1 h2 t1 t2
     -- branch vs. branch
     go s !sz (BitmapIndexed b1 ary1) (BitmapIndexed b2 ary2) =
@@ -1043,8 +1043,8 @@ unionArrayBy f b1 b2 ary1 ary2 = A.run $ do
 
 -- | Strict in the result of @f@.
 unionArrayByInternal
-    :: Int
-    -> (Int -> a -> a -> A.Sized a)
+    :: A.Size
+    -> (A.Size -> a -> a -> A.Sized a)
     -> Bitmap
     -> Bitmap
     -> A.Array a
@@ -1299,7 +1299,7 @@ filterMapAuxInternal onLeaf onColl = go 0
             step ary0 mary b0 0 0 1 n sze
       where
         step :: A.Array (Tree k v1) -> A.MArray s (Tree k v2)
-             -> Bitmap -> Int -> Int -> Bitmap -> Int -> Int
+             -> Bitmap -> Int -> Int -> Bitmap -> Int -> A.Size
              -> ST s (A.Sized (Tree k v2))
         step !ary !mary !b i !j !bi n !siz
             | i >= n = case j of
@@ -1329,7 +1329,7 @@ filterMapAuxInternal onLeaf onColl = go 0
             step ary0 mary 0 0 n siz
       where
         step :: A.Array (Leaf k v1) -> A.MArray s (Leaf k v2)
-             -> Int -> Int -> Int -> Int
+             -> Int -> Int -> Int -> A.Size
              -> ST s (A.Sized (Tree k v2))
         step !ary !mary i !j n !sze
             | i >= n    = case j of

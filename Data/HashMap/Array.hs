@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns, CPP, MagicHash, Rank2Types, UnboxedTuples #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -fno-full-laziness -funbox-strict-fields #-}
 
 -- | Zero based arrays.
@@ -10,6 +11,7 @@ module Data.HashMap.Array
     , RunRes (..)
     , RunResA
     , RunResM
+    , Size (..)
     , Sized (..)
 
       -- * Creation
@@ -235,7 +237,7 @@ unsafeThaw ary
 {-# INLINE unsafeThaw #-}
 
 -- | Helper datatype used in 'runInternal' and 'updateWithInternal'
-data RunRes f e = RunRes {-# UNPACK #-} !Int !(f e)
+data RunRes f e = RunRes {-# UNPACK #-} !Size !(f e)
 
 type RunResA e = RunRes Array e
 
@@ -317,10 +319,16 @@ updateWith' :: Array e -> Int -> (e -> e) -> Array e
 updateWith' ary idx f = update ary idx $! f (index ary idx)
 {-# INLINE updateWith' #-}
 
+-- | This newtype wrapper is to avoid confusion when local functions
+-- take more than one paramenter of 'Int' type (see 'go' in
+-- 'Data.HashMap.Base.unionWithKeyInternal').
+newtype Size = Size { unSize :: Int }
+    deriving (Eq, Ord, Num, Integral, Enum, Real)
+
 -- | Helper datatype used in 'updateWithInternal''. Used when a change in
 -- a value's size must be returned along with the value itself (typically
 -- a hashmap).
-data Sized a = Sized {-# UNPACK #-} !Int !a
+data Sized a = Sized {-# UNPACK #-} !Size !a
 
 -- | /O(n)/ Update the element at the given positio in this array, by
 -- applying a function to it.  Evaluates the element to WHNF before
