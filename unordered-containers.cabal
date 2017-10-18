@@ -179,6 +179,7 @@ benchmark benchmarks
     base,
     bytestring,
     containers,
+    vector,
     criterion >= 1.0 && < 1.3,
     deepseq >= 1.1,
     deepseq-generics,
