@@ -7,6 +7,10 @@
 module Data.HashMap.Array
     ( Array
     , MArray
+    , RunRes (..)
+    , RunResA
+    , RunResM
+    , Sized (..)
 
       -- * Creation
     , new
@@ -24,6 +28,7 @@ module Data.HashMap.Array
     , indexM
     , update
     , updateWith'
+    , updateWithInternal'
     , unsafeUpdateM
     , insert
     , insertM
@@ -32,6 +37,7 @@ module Data.HashMap.Array
     , unsafeFreeze
     , unsafeThaw
     , run
+    , runInternal
     , run2
     , copy
     , copyM
@@ -228,9 +234,23 @@ unsafeThaw ary
                    (# s', mary #) -> (# s', marray mary (length ary) #)
 {-# INLINE unsafeThaw #-}
 
+-- | Helper datatype used in 'runInternal' and 'updateWithInternal'
+data RunRes f e = RunRes {-# UNPACK #-} !Int !(f e)
+
+type RunResA e = RunRes Array e
+
+type RunResM s e = RunRes (MArray s) e
+
 run :: (forall s . ST s (MArray s e)) -> Array e
 run act = runST $ act >>= unsafeFreeze
 {-# INLINE run #-}
+
+runInternal :: (forall s . ST s (RunResM s e)) -> RunResA e
+runInternal act = runST $ do
+    RunRes s mary <- act
+    ary <- unsafeFreeze mary
+    return (RunRes s ary)
+{-# INLINE runInternal #-}
 
 run2 :: (forall s. ST s (MArray s e, a)) -> (Array e, a)
 run2 k = runST (do
@@ -296,6 +316,20 @@ updateM ary idx b =
 updateWith' :: Array e -> Int -> (e -> e) -> Array e
 updateWith' ary idx f = update ary idx $! f (index ary idx)
 {-# INLINE updateWith' #-}
+
+-- | Helper datatype used in 'updateWithInternal''. Used when a change in
+-- a value's size must be returned along with the value itself (typically
+-- a hashmap).
+data Sized a = Sized {-# UNPACK #-} !Int !a
+
+-- | /O(n)/ Update the element at the given positio in this array, by
+-- applying a function to it.  Evaluates the element to WHNF before
+-- inserting it into the array.
+updateWithInternal' :: Array e -> Int -> (e -> Sized e) -> RunResA e
+updateWithInternal' ary idx f =
+    let Sized sz e = f (index ary idx)
+    in RunRes sz (update ary idx e)
+{-# INLINE updateWithInternal' #-}
 
 -- | /O(1)/ Update the element at the given position in this array,
 -- without copying.
