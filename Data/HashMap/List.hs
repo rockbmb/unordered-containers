@@ -23,6 +23,7 @@ isPermutationBy f = go
   where
     f' = flip f
 
+    {-@ go :: xs:[a] -> ys:[b] -> Bool / [(len xs) + (len ys)] @-}
     go [] [] = True
     go (x : xs) (y : ys)
         | f x y         = go xs ys
@@ -61,6 +62,10 @@ unorderedCompare c as bs = go (sortBy cmpA as) (sortBy cmpB bs)
     inA b = (length $ filter (\a -> c a b == LT) as, negate $ length $ filter (\a -> c a b == GT) as)
 
 -- Returns Nothing is nothing deleted
+{-@ deleteBy :: eq:(a -> b -> Bool)
+    -> v:a -> l:[b]
+    -> Maybe {u:[b] | len u = len l - 1}
+@-}
 deleteBy              :: (a -> b -> Bool) -> a -> [b] -> Maybe [b]
 deleteBy _  _ []      = Nothing
 deleteBy eq x (y:ys)  = if x `eq` y then Just ys else fmap (y :) (deleteBy eq x ys)
