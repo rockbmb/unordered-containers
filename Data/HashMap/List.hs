@@ -18,21 +18,17 @@ import Prelude
 -- was O(n^2) too.
 --
 -- This assumes lists are of equal length
-isPermutationBy :: (a -> b -> Bool) -> [a] -> [b] -> Bool
-isPermutationBy f = go
-  where
-    f' = flip f
 
-    {-@ go :: xs:[a] -> ys:[b] -> Bool / [(len xs) + (len ys)] @-}
-    go [] [] = True
-    go (x : xs) (y : ys)
-        | f x y         = go xs ys
-        | otherwise     = fromMaybe False $ do
-            xs' <- deleteBy f' y xs
-            ys' <- deleteBy f x ys
-            return (go xs' ys')
-    go [] (_ : _) = False
-    go (_ : _) [] = False
+{-@ isPermutationBy :: f:(a -> b -> Bool) -> xs:[a] -> ys:[b] -> Bool / [(len xs) + (len ys)] @-}
+isPermutationBy _ [] [] = True
+isPermutationBy f (x : xs) (y : ys)
+    | f x y         = isPermutationBy f xs ys
+    | otherwise     = fromMaybe False $ do
+        xs' <- deleteBy (flip f) y xs
+        ys' <- deleteBy f x ys
+        return (isPermutationBy f xs' ys')
+isPermutationBy _ [] (_ : _) = False
+isPermutationBy _ (_ : _) [] = False
 
 -- The idea:
 --

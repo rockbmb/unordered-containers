@@ -7,6 +7,8 @@
 -- Note that no bounds checking are performed.
 module Data.HashMap.Array
     ( Array
+    , nul
+    , lenArr
     , MArray
     , RunRes (..)
     , RunResA
@@ -86,6 +88,7 @@ import GHC.Exts (Array#, newArray#, readArray#, writeArray#,
 #if defined(ASSERTS)
 import qualified Prelude
 #endif
+import qualified Prelude (length)
 
 import Data.HashMap.Unsafe (runST)
 
@@ -137,6 +140,13 @@ instance Show a => Show (Array a) where
 length :: Array a -> Int
 length ary = I# (sizeofArray# (unArray ary))
 {-# INLINE length #-}
+
+nul :: Array a -> Bool
+nul = (== 0) . length
+
+{- measure lenArr -}
+lenArr :: Array a -> Int
+lenArr (Array ary) = I# (sizeofArray# ary)
 
 -- | Smart constructor
 array :: Array# a -> Int -> Array a

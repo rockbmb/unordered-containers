@@ -10,7 +10,13 @@
 module Data.HashMap.Base
     (
       Tree(..)
+
+    , tlen
+
     , HashMap(..)
+
+    , hlen
+
     , Leaf(..)
 
       -- * Construction
@@ -118,14 +124,11 @@ import Text.Read hiding (step)
 import qualified Data.HashMap.Array as A
 import qualified Data.Hashable as H
 import Data.Hashable (Hashable)
--- LIQUID import qualified Data.Hashable.Lifted as H
 import Data.HashMap.Unsafe (runST)
 import Data.HashMap.UnsafeShift (unsafeShiftL, unsafeShiftR)
 import Data.HashMap.List (isPermutationBy, unorderedCompare)
--- LIQUID import Data.Maybe (isJust)
 import Data.Typeable (Typeable)
 
-import GHC.Exts (isTrue#)
 import qualified GHC.Exts as Exts
 
 #if MIN_VERSION_base(4,9,0)
@@ -152,28 +155,28 @@ instance (NFData k, NFData v) => NFData (Leaf k v) where
 -- Invariant: The length of the 1st argument to 'Full' is
 -- 2^bitsPerSubkey
 
-{-@ data Tree [tlen] k v
-         = Empty
-         | BitmapIndexed (bmp :: !Bitmap)
-                         (arr :: !(A.Array (Tree k v)))
-         | Leaf (h :: !Hash)
-                (l :: (Leaf k v))
-         | Full (arr :: !(A.Array (Tree k v)))
-         | Collision (h :: !Hash)
-                     (arr :: !(A.Array (Leaf k v)))
+{-@ data Tree [tlen] k v =
+           Empty
+         | BitmapIndexed (bmp:Bitmap)
+                         (arr:A.Array (Tree k v))
+         | Leaf (h:Hash)
+                (l:Leaf k v)
+         | Full (arr:A.Array (Tree k v))
+         | Collision (h:Hash)
+                     (arr:A.Array (Leaf k v))
   @-}
 
 {-@ invariant {v:Tree k v | (tlen v) >= 0} @-}
 
 {-@ measure tlen @-}
-tlen :: Tree k v -> A.Size
-tlen t = A.Size (go t 0)
-  where
-    go Empty                !n = n
-    go (Leaf _ _)            n = n + 1
-    go (BitmapIndexed _ ary) n = A.foldl' (flip go) n ary
-    go (Full ary)            n = A.foldl' (flip go) n ary
-    go (Collision _ ary)     n = n + A.length ary
+tlen :: Tree k v -> Int
+tlen Empty      = 0
+tlen (Leaf _ _) = 1
+tlen (BitmapIndexed _ ary) | A.nul ary = 0
+                           | otherwise = 1 --tlen (A.index ary 0) + tlen (BitmapIndexed 0 (A.delete ary 0))
+tlen (Full ary) | A.nul ary = 0
+                | otherwise = 1 --tlen (A.index ary 0) + tlen (BitmapIndexed 0 (A.delete ary 0))
+tlen (Collision _ ary)     = A.length ary
 
 -- | A map from keys to values.  A map cannot contain duplicate keys;
 -- each key can map to at most one value.
@@ -187,13 +190,15 @@ data Tree k v
 
 type role Tree nominal representational
 
-{-@ data HashMap [hlen] k v = HashMap A.Size (Tree k v) @-}
+{-@ data HashMap [hlen] k v = HashMap (sz:A.Size) (t:SizedTree k v sz) @-}
 
 {-@ invariant {v:HashMap k v | (hlen v) >= 0} @-}
 
 {-@ measure hlen @-}
 hlen :: HashMap k v -> A.Size
-hlen (HashMap _ t) = tlen t
+hlen (HashMap n _) = n
+
+{-@ type SizedTree k v N = {t:Tree k v | tlen t == N} @-}
 
 -- | A wrapper over 'Tree'. The 'Int' field represent the hashmap's
 -- size.
@@ -461,8 +466,6 @@ null :: HashMap k v -> Bool
 null (HashMap _ Empty) = True
 null _                 = False
 
-{-@ invariant {v:HashMap k v | hlen v = size v} @-}
-
 -- | /O(1)/ Return the number of key-value mappings in this map.
 {-@ size :: h:HashMap k v -> {n:Nat | n = hlen h} @-}
 size :: HashMap k v -> Int
@@ -517,7 +520,7 @@ lookupDefault def k t = case lookup k t of
 infixl 9 !
 
 -- | Create a 'Collision' value with two 'Leaf' values.
-{-@ collision :: h:Hash -> l:Leaf k v -> {t : Tree k v | tlen t = 2} @-}
+{-@ collision :: h:Hash -> l1:Leaf k v -> l2:Leaf k v -> (SizedTree k v 2) @-}
 collision :: Hash -> Leaf k v -> Leaf k v -> Tree k v
 collision h e1 e2 =
     let v = A.run $ do mary <- A.new 2 e1
@@ -527,10 +530,6 @@ collision h e1 e2 =
 {-# INLINE collision #-}
 
 -- | Create a 'BitmapIndexed' or 'Full' node.
-{-@ bitmapIndexedOrFull :: bmp:Bitmap
-                        -> arr:A.Array (Tree k v)
-                        -> {v:Tree k v | tlen v = A.foldr (+) 0 (A.map tlen arr)}
-@-}
 bitmapIndexedOrFull :: Bitmap -> A.Array (Tree k v) -> Tree k v
 bitmapIndexedOrFull b ary
     | b == fullNodeMask = Full ary
@@ -540,11 +539,11 @@ bitmapIndexedOrFull b ary
 -- | /O(log n)/ Associate the specified value with the specified
 -- key in this map.  If this map previously contained a mapping for
 -- the key, the old value is replaced.
-{-@ insert :: (Eq k, Hashable k)
-           => key:k
-           -> val:v
-           -> h:HashMap k v
-           -> {h:HashMap k v | size h = if member k h then hlen h else 1 + hlen h}
+{-@ assert insert :: (Eq k, Hashable k)
+           => k
+           -> v
+           -> HashMap k v
+           -> HashMap k v
 @-}
 insert :: (Eq k, Hashable k) => k -> v -> HashMap k v -> HashMap k v
 insert k0 v0 (HashMap sz m0) =
@@ -600,7 +599,7 @@ insertInternal k0 v0 m0 = go h0 k0 v0 0 m0
                  => key:k
                  -> val:v
                  -> h:HashMap k v
-                 -> {h:HashMap k v | size h = if member k h then hlen h else 1 + hlen h}
+                 -> HashMap k v
 @-}
 -- | In-place update version of insert
 unsafeInsert :: (Eq k, Hashable k) => k -> v -> HashMap k v -> HashMap k v
@@ -650,15 +649,6 @@ unsafeInsertInternal k0 v0 m0 = runST (go h0 k0 v0 0 m0)
 {-# INLINABLE unsafeInsertInternal #-}
 
 -- | Create a map from two key-value pairs which hashes don't collide.
-{-@ two :: sh:Shift
-        -> hs:Hash
-        -> key:k
-        -> val:v
-        -> hs':Hash
-        -> key':k
-        -> val':v
-        -> {st:ST s (Tree k v) | tlen (runST st) = 2
-@-}
 two :: Shift -> Hash -> k -> v -> Hash -> k -> v -> ST s (Tree k v)
 two = go
   where
@@ -691,7 +681,7 @@ two = go
                -> key:k
                -> val:v
                -> h:HashMap k v
-               -> {h':HashMap k v | size h' = if member k h then hlen h else 1 + hlen h}
+               -> HashMap k v
 @-}
 insertWith :: (Eq k, Hashable k) => (v -> v -> v) -> k -> v -> HashMap k v
             -> HashMap k v
@@ -754,7 +744,7 @@ insertWithInternal f k0 v0 m0 = go h0 k0 v0 0 m0
                      -> key:k
                      -> val:v
                      -> h:HashMap k v
-                     -> {h:HashMap k v | size h = if member k h then hlen h else 1 + hlen h}
+                     -> HashMap k v
 @-}
 unsafeInsertWith :: forall k v . (Eq k, Hashable k)
                  => (v -> v -> v) -> k -> v -> HashMap k v
@@ -811,7 +801,7 @@ unsafeInsertWithInternal f k0 v0 m0 = runST (go h0 k0 v0 0 m0)
 {-@ delete :: (Eq k, Hashable k)
            => key:k
            -> h:HashMap k v
-           -> {h:HashMap k v | size h = if member k h then hlen h - 1 else hlen h}
+           -> HashMap k v
 @-}
 delete :: (Eq k, Hashable k) => k -> HashMap k v -> HashMap k v
 delete k0 (HashMap sz m0) =
@@ -911,7 +901,7 @@ adjust f k0 (HashMap sz m0) = HashMap sz (go h0 k0 0 m0)
            => fun:(a -> Maybe a)
            -> key:k
            -> h:HashMap k a
-           -> {h:HashMap k a | size h = if isJust (f (lookup k h)) then 1 + hlen h else hlen h}
+           -> HashMap k a
 @-}
 update :: (Eq k, Hashable k) => (a -> Maybe a) -> k -> HashMap k a -> HashMap k a
 update f = alter (>>= f)
@@ -921,10 +911,10 @@ update f = alter (>>= f)
 -- absence thereof. @alter@ can be used to insert, delete, or update a value in a
 -- map. In short : @'lookup' k ('alter' f k m) = f ('lookup' k m)@.
 {-@ alter :: (Eq k, Hashable k)
-          => fun:(a -> Maybe a)
+          => fun:(Maybe a -> Maybe a)
           -> key:k
           -> h:HashMap k a
-          -> {h:HashMap k a | size h = if isJust (f (lookup k h)) then 1 + hlen h else hlen h}
+          -> HashMap k a
 @-}
 alter
     :: (Eq k, Hashable k)
@@ -943,11 +933,11 @@ alter f k m =
 
 -- | /O(n+m)/ The union of two maps. If a key occurs in both maps, the
 -- mapping from the first will be the mapping in the result.
-{-@ union :: (Eq k, Hashable k)
+{- union :: (Eq k, Hashable k)
           => h1:HashMap k v
           -> h2:HashMap k v
-          -> {h:HashMap k a | size h = hlen h1 + hlen h2 - hlen (intersection h1 h2)}
-@-}
+          -> {h:HashMap k v | size h = hlen h1 + hlen h2 - hlen (intersection h1 h2)}
+-}
 union :: (Eq k, Hashable k) => HashMap k v -> HashMap k v -> HashMap k v
 union = unionWith const
 {-# INLINABLE union #-}
@@ -955,12 +945,12 @@ union = unionWith const
 -- | /O(n+m)/ The union of two maps.  If a key occurs in both maps,
 -- the provided function (first argument) will be used to compute the
 -- result.
-{-@ unionWith :: (Eq k, Hashable k)
+{- unionWith :: (Eq k, Hashable k)
               => fun:(v -> v -> v)
               -> h1:HashMap k v
               -> h2:HashMap k v
-              -> {h:HashMap k a | size h = hlen h1 + hlen h2 - hlen (intersection h1 h2)}
-@-}
+              -> {h:HashMap k v | size h = hlen h1 + hlen h2 - hlen (intersection h1 h2)}
+-}
 unionWith :: (Eq k, Hashable k) => (v -> v -> v) -> HashMap k v -> HashMap k v
           -> HashMap k v
 unionWith f = unionWithKey (const f)
@@ -969,11 +959,12 @@ unionWith f = unionWithKey (const f)
 -- | /O(n+m)/ The union of two maps.  If a key occurs in both maps,
 -- the provided function (first argument) will be used to compute the
 -- result.
-{-@ unionWithKey :: (Eq k, Hashable k)
-                 => h1:HashMap k v
+{- unionWithKey :: (Eq k, Hashable k)
+                 => f:(k -> v -> v -> v)
+                 -> h1:HashMap k v
                  -> h2:HashMap k v
-                 -> {h:HashMap k a | size h = hlen h1 + hlen h2 - hlen (intersection h1 h2)}
-@-}
+                 -> {h:HashMap k v | hlen h = hlen h1 + hlen h2 - hlen (intersection h1 h2)}
+-}
 unionWithKey
     :: (Eq k, Hashable k)
     => (k -> v -> v -> v)
@@ -1238,11 +1229,11 @@ traverseWithKey f (HashMap sz m) = HashMap sz <$> go m
 
 -- | /O(n*log m)/ Difference of two maps. Return elements of the first map
 -- not existing in the second.
-{-@ difference :: (Eq k, Hashable k)
+{- difference :: (Eq k, Hashable k)
                => h1:HashMap k v
                -> h2:HashMap k w
                -> {h:HashMap k v | size h = hlen h - hlen (intersection h1 h2)}
-@-}
+-}
 difference :: (Eq k, Hashable k) => HashMap k v -> HashMap k w -> HashMap k v
 difference a b= foldlWithKey' go empty a
   where
@@ -1255,11 +1246,12 @@ difference a b= foldlWithKey' go empty a
 -- encountered, the combining function is applied to the values of these keys.
 -- If it returns 'Nothing', the element is discarded (proper set difference). If
 -- it returns (@'Just' y@), the element is updated with a new value @y@.
-{-@ differenceWith :: (Eq k, Hashable k)
-                   => h1:HashMap k v
+{- differenceWith :: (Eq k, Hashable k)
+                   => f:(v -> w -> Maybe v)
+                   -> h1:HashMap k v
                    -> h2:HashMap k w
                    -> {h:HashMap k v | size h = hlen h - hlen (intersection h1 h2)}
-@-}
+-}
 
 differenceWith
     :: (Eq k, Hashable k)
@@ -1279,7 +1271,7 @@ differenceWith f a b = foldlWithKey' go empty a
 {-@ intersection :: (Eq k, Hashable k)
                  => h1:HashMap k v
                  -> h2:HashMap k w
-                 -> {h:HashMap k v | size h = (len . filter (member h1) . keys) h2}
+                 -> HashMap k v
 @-}
 intersection :: (Eq k, Hashable k) => HashMap k v -> HashMap k w -> HashMap k v
 intersection a b = foldlWithKey' go empty a
@@ -1296,7 +1288,7 @@ intersection a b = foldlWithKey' go empty a
                      => fun: (v -> w -> u)
                      -> h1:HashMap k v
                      -> h2:HashMap k w
-                     -> {h:HashMap k u | size h = (len . filter (member h1) . keys) h2}
+                     -> HashMap k u
 @-}
 intersectionWith :: (Eq k, Hashable k) => (v1 -> v2 -> v3) -> HashMap k v1
                  -> HashMap k v2 -> HashMap k v3
@@ -1311,10 +1303,10 @@ intersectionWith f a b = foldlWithKey' go empty a
 -- the provided function is used to combine the values from the two
 -- maps.
 {-@ intersectionWithKey :: (Eq k, Hashable k)
-                        => fun: (v -> w -> u)
+                        => fun: (k -> v -> w -> u)
                         -> h1:HashMap k v
                         -> h2:HashMap k w
-                        -> {h:HashMap k u | size h = (len . filter (member h1) . keys) h2}
+                        -> HashMap k u
 @-}
 intersectionWithKey :: (Eq k, Hashable k) => (k -> v1 -> v2 -> v3)
                     -> HashMap k v1 -> HashMap k v2 -> HashMap k v3
