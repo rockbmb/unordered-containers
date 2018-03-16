@@ -10,7 +10,7 @@ import Data.Hashable (Hashable, hash)
 import qualified Data.ByteString as BS
 import qualified "hashmap" Data.HashMap as IHM
 import qualified Data.HashMap.Strict as HM
-import qualified Data.HashSet as HS
+import qualified "unordered-containers" Data.HashSet as HS
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import qualified Data.Set as S
