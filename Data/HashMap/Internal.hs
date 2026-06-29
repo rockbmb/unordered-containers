@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MagicHash             #-}
 {-# LANGUAGE PatternGuards         #-}
+{-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE PolyKinds             #-}
 {-# LANGUAGE RoleAnnotations       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -12,6 +13,7 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UnboxedSums           #-}
 {-# LANGUAGE UnboxedTuples         #-}
+{-# LANGUAGE ViewPatterns          #-}
 {-# OPTIONS_GHC -fno-full-laziness -funbox-strict-fields #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
@@ -31,7 +33,7 @@
 
 module Data.HashMap.Internal
     (
-      HashMap(..)
+      HashMap(.., BitmapIndexed)
     , Leaf(..)
 
       -- * Construction
@@ -222,15 +224,18 @@ data HashMap k v
     -- ^ Invariants:
     --
     -- * 'Empty' is not a valid sub-node. It can only appear at the root. (INV1)
-    | BitmapIndexed {-# UNPACK #-} !Size !Bitmap !(Array (HashMap k v))
-    -- ^ Invariants:
+    | BitmapIndexed_ {-# UNPACK #-} !Bitmap !(Array (HashMap k v))
+    -- ^ Internal constructor. The 'Bitmap' field packs both the size
+    -- (upper 32 bits) and the bitmap (lower 32 bits).
+    -- Use the 'BitmapIndexed' pattern synonym instead.
     --
-    -- * Only the lower @maxChildren@ bits of the 'Bitmap' may be set. The
-    --   remaining upper bits must be 0. (INV2)
+    -- Invariants:
+    -- * Only the lower @maxChildren@ bits of the bitmap portion may be set.
+    --   (INV2)
     -- * The array of a 'BitmapIndexed' node stores at least 1 and at most
     --   @'maxChildren' - 1@ sub-nodes. (INV3)
     -- * The number of sub-nodes is equal to the number of 1-bits in its
-    --   'Bitmap'. (INV4)
+    --   bitmap. (INV4)
     -- * If a 'BitmapIndexed' node has only one sub-node, this sub-node must
     --   be a 'BitmapIndexed' or a 'Full' node. (INV5)
     | Leaf !Hash !(Leaf k v)
@@ -260,6 +265,16 @@ data HashMap k v
     --   node down - or the sum of sizes of all subtrees if it's an array of hashmaps.
 
 type Size = Int
+
+-- | Bidirectional pattern synonym for 'BitmapIndexed_' that presents the
+-- old three-argument interface (size, bitmap, array) while internally
+-- packing the size into the upper 32 bits of the bitmap.
+pattern BitmapIndexed :: Size -> Bitmap -> Array (HashMap k v) -> HashMap k v
+pattern BitmapIndexed sz b ary <- BitmapIndexed_ (unpackSizeBitmap -> (sz, b)) ary
+  where
+    BitmapIndexed sz b ary = BitmapIndexed_ (packSizeBitmap sz b) ary
+
+{-# COMPLETE Empty, BitmapIndexed, Leaf, Full, Collision #-}
 
 type role HashMap nominal representational
 
@@ -3076,6 +3091,27 @@ fullBitmap :: Bitmap
 -- See issue #412.
 fullBitmap = complement (complement 0 `shiftL` maxChildren)
 {-# INLINE fullBitmap #-}
+
+-- | Pack a size and bitmap into a single Word.
+-- Size goes in upper 32 bits, bitmap in lower 32 bits.
+packSizeBitmap :: Int -> Bitmap -> Bitmap
+packSizeBitmap sz bm = (fromIntegral sz `unsafeShiftL` 32) .|. bm
+{-# INLINE packSizeBitmap #-}
+
+-- | Extract size and bitmap from a packed size-bitmap.
+unpackSizeBitmap :: Bitmap -> (Int, Bitmap)
+unpackSizeBitmap sbm = (fromIntegral (sbm `unsafeShiftR` 32), sbm .&. 0xFFFFFFFF)
+{-# INLINE unpackSizeBitmap #-}
+
+-- | Extract size from upper 32 bits of a packed size-bitmap.
+unpackSize :: Bitmap -> Int
+unpackSize sbm = fromIntegral (sbm `unsafeShiftR` 32)
+{-# INLINE unpackSize #-}
+
+-- | Extract bitmap from lower 32 bits of a packed size-bitmap.
+unpackBitmap :: Bitmap -> Bitmap
+unpackBitmap sbm = sbm .&. 0xFFFFFFFF
+{-# INLINE unpackBitmap #-}
 
 -- | Increment a 'Shift' for use at the next deeper level.
 nextShift :: Shift -> Shift
